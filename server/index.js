@@ -35,36 +35,105 @@ function readOrCreateAdminPassword() {
 }
 
 const adminPassword = readOrCreateAdminPassword();
-const dataPath = process.env.DATA_DIR
-  ? path.resolve(projectRoot, process.env.DATA_DIR)
-  : path.join(projectRoot, 'data');
-mkdirSync(dataPath, { recursive: true });
+const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, '');
+const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
+if (Boolean(supabaseUrl) !== Boolean(supabaseSecretKey)) {
+  throw new Error('Set both SUPABASE_URL and SUPABASE_SECRET_KEY, or neither to use local SQLite.');
+}
+const useSupabase = Boolean(supabaseUrl && supabaseSecretKey);
 
-const database = new DatabaseSync(path.join(dataPath, 'plans.db'));
-database.exec(`
-  PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS plans (
-    submission_id TEXT PRIMARY KEY,
-    activity TEXT NOT NULL CHECK (activity IN ('Coffee', 'Dinner', 'Picnic')),
-    date TEXT NOT NULL,
-    note TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`);
-const savePlan = database.prepare(`
-  INSERT INTO plans (submission_id, activity, date, note, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?)
-  ON CONFLICT(submission_id) DO UPDATE SET
-    activity = excluded.activity,
-    date = excluded.date,
-    note = excluded.note,
-    updated_at = excluded.updated_at
-`);
-const listPlans = database.prepare(`
-  SELECT submission_id AS submissionId, activity, date, note, created_at AS createdAt, updated_at AS updatedAt
-  FROM plans ORDER BY created_at DESC
-`);
+let database;
+let savePlan;
+let listPlans;
+if (!useSupabase) {
+  const dataPath = process.env.DATA_DIR
+    ? path.resolve(projectRoot, process.env.DATA_DIR)
+    : path.join(projectRoot, 'data');
+  mkdirSync(dataPath, { recursive: true });
+
+  database = new DatabaseSync(path.join(dataPath, 'plans.db'));
+  database.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS plans (
+      submission_id TEXT PRIMARY KEY,
+      activity TEXT NOT NULL CHECK (activity IN ('Coffee', 'Dinner', 'Picnic')),
+      date TEXT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  savePlan = database.prepare(`
+    INSERT INTO plans (submission_id, activity, date, note, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(submission_id) DO UPDATE SET
+      activity = excluded.activity,
+      date = excluded.date,
+      note = excluded.note,
+      updated_at = excluded.updated_at
+  `);
+  listPlans = database.prepare(`
+    SELECT submission_id AS submissionId, activity, date, note, created_at AS createdAt, updated_at AS updatedAt
+    FROM plans ORDER BY created_at DESC
+  `);
+}
+
+async function savePlanRecord(plan, now) {
+  if (!useSupabase) {
+    savePlan.run(plan.submissionId, plan.activity, plan.date, plan.note, now, now);
+    return;
+  }
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/plans?on_conflict=submission_id`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseSecretKey,
+      authorization: `Bearer ${supabaseSecretKey}`,
+      'content-type': 'application/json',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify({
+      submission_id: plan.submissionId,
+      activity: plan.activity,
+      date: plan.date,
+      note: plan.note,
+      created_at: now,
+      updated_at: now,
+    }),
+  });
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 300);
+    throw new Error(`Supabase could not save the plan (${response.status}): ${details}`);
+  }
+}
+
+async function fetchPlans() {
+  if (!useSupabase) return listPlans.all();
+
+  const query = new URLSearchParams({
+    select: 'submission_id,activity,date,note,created_at,updated_at',
+    order: 'created_at.desc',
+  });
+  const response = await fetch(`${supabaseUrl}/rest/v1/plans?${query}`, {
+    headers: {
+      apikey: supabaseSecretKey,
+      authorization: `Bearer ${supabaseSecretKey}`,
+    },
+  });
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 300);
+    throw new Error(`Supabase could not load plans (${response.status}): ${details}`);
+  }
+  const rows = await response.json();
+  return rows.map((plan) => ({
+    submissionId: plan.submission_id,
+    activity: plan.activity,
+    date: plan.date,
+    note: plan.note,
+    createdAt: plan.created_at,
+    updatedAt: plan.updated_at,
+  }));
+}
 
 function sendJson(response, status, value) {
   response.writeHead(status, {
@@ -155,10 +224,10 @@ const server = createServer(async (request, response) => {
         return;
       }
       const now = new Date().toISOString();
-      savePlan.run(body.submissionId, activity, body.date, note, now, now);
+      await savePlanRecord({ submissionId: body.submissionId, activity, date: body.date, note }, now);
       sendJson(response, 201, { saved: true });
     } catch (error) {
-      sendJson(response, error.status || 400, { error: error.message || 'Could not save the plan.' });
+      sendJson(response, error.status || 502, { error: error.message || 'Could not save the plan.' });
     }
     return;
   }
@@ -168,7 +237,11 @@ const server = createServer(async (request, response) => {
       sendJson(response, 401, { error: 'That admin password did not match.' });
       return;
     }
-    sendJson(response, 200, { plans: listPlans.all() });
+    try {
+      sendJson(response, 200, { plans: await fetchPlans() });
+    } catch (error) {
+      sendJson(response, 502, { error: error.message || 'Could not load saved plans.' });
+    }
     return;
   }
 
@@ -188,12 +261,13 @@ const port = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ?
 const host = process.env.HOST || '0.0.0.0';
 server.listen(port, host, () => {
   console.log(`Plan backend listening on http://${host}:${port}`);
-  if (process.env.NODE_ENV === 'production') console.log('Set ADMIN_PASSWORD and DATA_DIR in your hosting environment.');
+  console.log(`Plan storage: ${useSupabase ? 'Supabase' : 'local SQLite'}`);
+  if (process.env.NODE_ENV === 'production') console.log('Set ADMIN_PASSWORD and configure Supabase credentials or a persistent DATA_DIR.');
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => {
-    database.close();
+    database?.close();
     process.exit(0);
   }));
 }
