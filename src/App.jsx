@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import AdminDashboard from './AdminDashboard.jsx';
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
 const hearts = Array.from({ length: 26 }, (_, index) => ({
   id: index,
   symbol: ['♥', '♡', '♥', '♡'][index % 4],
@@ -112,12 +114,12 @@ function InviteApp() {
     setIsSubmitting(true);
     setSubmissionError('');
     try {
-      const response = await fetch('/api/plans', {
+      const response = await fetch(`${apiBaseUrl}/api/plans`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ submissionId, activity, date: selectedDate, note: personalNote }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Could not save the plan. Please try again.');
       setHasSubmitted(true);
       setScreen('done');

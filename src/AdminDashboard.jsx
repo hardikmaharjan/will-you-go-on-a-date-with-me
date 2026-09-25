@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
 function formatDate(value) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -24,11 +26,11 @@ export default function AdminDashboard() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/plans', {
+      const response = await fetch(`${apiBaseUrl}/api/plans`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         cache: 'no-store',
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Could not load plans.');
       setPlans(result.plans);
       setAuthenticated(true);

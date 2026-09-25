@@ -167,6 +167,23 @@ async function readJson(request) {
   }
 }
 
+function applyApiCors(request, response) {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  const configuredOrigins = (process.env.FRONTEND_ORIGIN || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const localOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (configuredOrigins.includes(origin) || localOrigin) {
+    response.setHeader('access-control-allow-origin', origin);
+    response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.setHeader('access-control-allow-headers', 'Authorization, Content-Type');
+    response.setHeader('access-control-max-age', '86400');
+    response.setHeader('vary', 'Origin');
+  }
+}
+
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -206,6 +223,13 @@ function serveApp(request, response, pathname) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', 'http://localhost');
+  if (url.pathname.startsWith('/api/')) {
+    applyApiCors(request, response);
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204).end();
+      return;
+    }
+  }
   if (url.pathname === '/api/plans' && request.method === 'POST') {
     if (!(request.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
       sendJson(response, 415, { error: 'Plan submissions must be JSON.' });

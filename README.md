@@ -17,6 +17,8 @@ Open the URL printed by Vite. The first run creates a strong admin password in `
 
 In the Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql) to create the plans table. Add `SUPABASE_URL` and `SUPABASE_SECRET_KEY` to the backend environment. The secret key must only be set on the server (for example, as a Render secret); never add it to Vite's `VITE_*` variables or client code. When both variables are present, the backend uses Supabase instead of SQLite.
 
+If hosting the frontend on Vercel and the backend on Render, set `VITE_API_BASE_URL` in Vercel to the Render service's base URL, and set `FRONTEND_ORIGIN` in Render to the exact Vercel site origin (for example, `https://your-project.vercel.app`). Redeploy both services after changing environment variables. The Supabase secret belongs only in Render.
+
 ## Production
 
 ```sh
