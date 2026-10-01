@@ -1,5 +1,4 @@
 User-agent: *
 Allow: /
-Disallow: /admin
 
 Sitemap: https://will-you-go-on-a-date-with-me-sepia.vercel.app/sitemap.xml

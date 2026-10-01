@@ -65,7 +65,9 @@ function InviteApp() {
   const zoneRef = useRef(null);
 
   useEffect(() => {
-    document.title = screen === 'yes' || screen === 'done' ? 'Yay! It’s a date ♡' : 'A little question for you ♡';
+    document.title = screen === 'yes' || screen === 'done'
+      ? 'Yay! It’s a date ♡ | A Little Question'
+      : 'A Little Question | Cute Interactive Date Invitation';
   }, [screen]);
 
   function moveNoButton() {
